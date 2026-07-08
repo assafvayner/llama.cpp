@@ -66,12 +66,19 @@ struct common_download_task {
     std::string local_path;
     std::function<void()> on_done;
     bool is_hf = false;
+    // xet download info, empty xet_hash means the file is not stored on xet
+    std::string xet_hash;
+    std::string xet_token_url;
+    std::string sha256;
+    size_t size = 0;
 
     common_download_task() = default;
     common_download_task(hf_cache::hf_file f,
             const common_download_opts & opts,
             std::function<void()> on_done = nullptr)
-        : opts(opts), url(f.url), local_path(f.local_path), on_done(on_done), is_hf(true) {}
+        : opts(opts), url(f.url), local_path(f.local_path), on_done(on_done), is_hf(true),
+          xet_hash(f.xet_hash), xet_token_url(f.xet_token_url),
+          sha256(f.oid.size() == 64 ? f.oid : ""), size(f.size) {}
 };
 
 void common_download_run_tasks(const std::vector<common_download_task> & tasks);

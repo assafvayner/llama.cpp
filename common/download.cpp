@@ -23,6 +23,10 @@
 
 #include "http.h"
 
+#ifdef LLAMA_USE_XET
+#include "xet_session.hpp"
+#endif
+
 #ifndef __EMSCRIPTEN__
 #ifdef __linux__
 #include <linux/limits.h>
@@ -744,12 +748,108 @@ common_download_hf_plan common_download_get_hf_plan(const common_params_model & 
     return plan;
 }
 
+#ifdef LLAMA_USE_XET
+// download a xet-backed HF file through the xet C API, returns true on success
+static bool common_download_file_xet(const common_download_task & task,
+                                     common_download_callback * callback) {
+    const std::string & path = task.local_path;
+    const std::string path_temporary = path + ".downloadInProgress";
+
+    { // silent
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+    }
+
+    LOG_INF("%s: downloading %s via xet (hash: %s)\n", __func__, task.url.c_str(), task.xet_hash.c_str());
+
+    common_download_progress p;
+    p.url   = task.url;
+    p.total = task.size;
+
+    if (callback) {
+        callback->on_start(p);
+    }
+
+    bool success   = false;
+    bool cancelled = false;
+    try {
+        static xet::Session session;
+
+        xet::AuthConfig cfg;
+        cfg.token_refresh_url(task.xet_token_url);
+        if (!task.opts.bearer_token.empty()) {
+            cfg.add_refresh_header("Authorization", "Bearer " + task.opts.bearer_token);
+        }
+
+        auto group = session.new_file_download_group(cfg);
+        xet::FileInfo file_info = task.sha256.empty()
+            ? xet::FileInfo(task.xet_hash.c_str(), task.size)
+            : xet::FileInfo(task.xet_hash.c_str(), task.size, task.sha256.c_str());
+
+        auto download = group.download_to_path(file_info, path_temporary.c_str());
+        auto op = group.finish_start();
+
+        while (op.poll() == XetPollState_XetPollPending) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (callback) {
+                p.downloaded = group.progress().total_bytes_completed;
+                callback->on_update(p);
+                if (!cancelled && callback->is_cancelled()) {
+                    cancelled = true;
+                    group.abort();
+                }
+            }
+        }
+        op.wait(); // throws on error, including after abort
+
+        if (!cancelled) {
+            if (std::rename(path_temporary.c_str(), path.c_str()) != 0) {
+                LOG_ERR("%s: unable to rename file: %s to %s\n", __func__, path_temporary.c_str(), path.c_str());
+            } else {
+                p.downloaded = p.total;
+                success = true;
+            }
+        }
+    } catch (const std::exception & e) {
+        if (!cancelled) {
+            LOG_WRN("%s: xet download of %s failed: %s (falling back to HTTP)\n", __func__, task.url.c_str(), e.what());
+        }
+    }
+
+    if (callback) {
+        callback->on_done(p, success);
+    }
+    if (!success) {
+        // remove partial output so the HTTP fallback does not resume from it
+        std::error_code ec;
+        std::filesystem::remove(path_temporary, ec);
+    }
+    return success;
+}
+#endif
+
+static int common_download_file_task(const common_download_task & task) {
+#ifdef LLAMA_USE_XET
+    if (!task.xet_hash.empty() && !task.opts.offline && !std::filesystem::exists(task.local_path)) {
+        ProgressBar tty_cb;
+        common_download_callback * callback = task.opts.callback ? task.opts.callback : &tty_cb;
+        if (common_download_file_xet(task, callback)) {
+            return 200;
+        }
+        if (callback->is_cancelled()) {
+            return -1;
+        }
+    }
+#endif
+    return common_download_file_single(task.url, task.local_path, task.opts, task.is_hf);
+}
+
 void common_download_run_tasks(const std::vector<common_download_task> & tasks) {
     std::vector<std::future<int>> futures;
     for (const auto & task : tasks) {
         futures.push_back(std::async(std::launch::async,
             [&task]() {
-                return common_download_file_single(task.url, task.local_path, task.opts, task.is_hf);
+                return common_download_file_task(task);
             }
         ));
     }

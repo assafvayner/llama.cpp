@@ -167,4 +167,13 @@ if (LLAMA_LLGUIDANCE)
     endif()
 endif()
 
+if (LLAMA_XET)
+    if (NOT XET_CORE_DIR)
+        message(FATAL_ERROR "LLAMA_XET requires XET_CORE_DIR to point to a local xet-core checkout")
+    endif()
+    add_subdirectory(${XET_CORE_DIR}/xet_capi ${CMAKE_CURRENT_BINARY_DIR}/xet_capi)
+    target_compile_definitions(${TARGET} PUBLIC LLAMA_USE_XET)
+    target_link_libraries(${TARGET} PRIVATE xet_capi)
+endif()
+
 target_link_libraries(${TARGET} PUBLIC llama Threads::Threads)

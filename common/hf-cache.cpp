@@ -344,6 +344,18 @@ hf_files get_repo_files(const std::string & repo_id,
                 continue;
             }
 
+            if (item.contains("size") && item["size"].is_number_unsigned()) {
+                file.size = item["size"].get<size_t>();
+            }
+
+            if (item.contains("xetHash") && item["xetHash"].is_string()) {
+                std::string xet_hash = item["xetHash"].get<std::string>();
+                if (is_hex_string(xet_hash, 64) && file.size > 0) {
+                    file.xet_hash = xet_hash;
+                    file.xet_token_url = endpoint + "api/models/" + repo_id + "/xet-read-token/" + commit;
+                }
+            }
+
             file.url = endpoint + repo_id + "/resolve/" + commit + "/" + file.path;
 
             fs::path final_path = commit_path / file.path;
