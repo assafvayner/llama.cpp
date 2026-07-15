@@ -787,10 +787,14 @@ static bool common_download_file_xet(const common_download_task & task,
             : xet::FileInfo(task.xet_hash.c_str(), task.size, task.sha256.c_str());
 
         auto download = group.download_to_path(file_info, path_temporary.c_str());
-        auto op = group.finish_start();
 
-        while (op.poll() == XetPollState_XetPollPending) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // finish() blocks until all downloads complete; run it on a worker
+        // thread so this thread can drive the progress bar and cancellation.
+        // Reading progress()/abort() concurrently from another thread is part
+        // of the download-group handle's supported contract.
+        std::future<void> fut = std::async(std::launch::async, [&] { group.finish(); });
+
+        while (fut.wait_for(std::chrono::milliseconds(100)) != std::future_status::ready) {
             if (callback) {
                 p.downloaded = group.progress().total_bytes_completed;
                 callback->on_update(p);
@@ -800,7 +804,7 @@ static bool common_download_file_xet(const common_download_task & task,
                 }
             }
         }
-        op.wait(); // throws on error, including after abort
+        fut.get(); // throws on error, including after abort
 
         if (!cancelled) {
             if (std::rename(path_temporary.c_str(), path.c_str()) != 0) {

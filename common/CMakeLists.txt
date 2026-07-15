@@ -173,6 +173,7 @@ if (LLAMA_XET)
     endif()
     add_subdirectory(${XET_CORE_DIR}/xet_capi ${CMAKE_CURRENT_BINARY_DIR}/xet_capi)
     target_compile_definitions(${TARGET} PUBLIC LLAMA_USE_XET)
+    target_include_directories(${TARGET} PRIVATE ${XET_CORE_DIR}/xet_capi/examples/cpp)
     target_link_libraries(${TARGET} PRIVATE xet_capi)
 endif()
 
