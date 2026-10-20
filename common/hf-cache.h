@@ -14,6 +14,10 @@ struct hf_file {
     std::string final_path;
     std::string oid;
     std::string repo_id;
+    size_t size = 0;
+    // set when the file is stored on xet (has a xetHash in the tree API response)
+    std::string xet_hash;
+    std::string xet_token_url;
 };
 
 using hf_files = std::vector<hf_file>;
